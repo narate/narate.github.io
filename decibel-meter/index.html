@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>เครื่องวัดเสียง decibel meter ออนไลน์ | narate.github.io </title>
+    <meta name="description" content="วัดระดับเสียงรบกวนรอบตัวคุณได้ง่ายๆ ด้วยเครื่องวัดเสียง decibel meter ออนไลน์ของเรา ฟรี! ใช้งานได้บนทุกอุปกรณ์ พร้อมกราฟแสดงผลแบบเรียลไทม์">
+    <meta name="keywords" content="เครื่องวัดเสียง, decibel meter, decibel meter online, วัดความดังเสียง, ระดับเสียง, เดซิเบล, เสียงรบกวน, การวัดเสียง, เครื่องวัดเสียงออนไลน์, แอพวัดเสียง">  
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js"></script>
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-adapter-moment/1.0.0/chartjs-adapter-moment.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/hammer.js/2.0.8/hammer.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-zoom/1.2.1/chartjs-plugin-zoom.min.js"></script>
+    <style>
+        /* ... (CSS styles remain the same) ... */
+
+        .header {
+            text-align: center;
+            font-size: 5vh;
+        }
+
+        .current-value {
+            text-align: center;
+            font-size: 5vh;
+        }
+
+        .mic-status {
+            text-align: center;
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+        }
+
+        .mic-status.error {
+            background-color: #fee2e2;
+            color: #dc2626;
+        }
+
+        .mic-status.success {
+            background-color: #dcfce7;
+            color: #16a34a;
+        }
+
+        button.start {
+            background: #16a34a;
+        }
+
+        button.stop {
+            background: #dc2626;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>เครื่องวัดความดังเสียง</h1>
+        </div>
+
+        <div id="micStatus" class="mic-status">
+            กรุณากดปุ่มเริ่มเพื่อเปิดไมโครโฟน
+        </div>
+
+        <div class="controls">
+            <button id="startButton" class="start">เริ่มการวัด</button>
+            <button id="stopButton" class="stop" style="display: none;">หยุดการวัด</button>
+            <label for="frequency">ความถี่ในการอัปเดต (วินาที):</label>
+            <input type="number" id="frequency" name="frequency" min="0.1" max="1" step="0.1" value="0.1">
+            <button id="downloadButton">ดาวน์โหลดกราฟ</button>
+        </div>
+
+        <div id="currentDb" class="current-value">
+            0 <span class="unit">dB</span>
+        </div>
+
+        <div class="chart-container" style="position: relative; height:40vh; width:100%">
+            <canvas id="decibelChart"></canvas>
+        </div>
+
+        <hr />
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #22c55e"></div>
+                <button onclick="resetZoom()">รีเซ็ตการซูม</button> :: <span>ปลอดภัย (0-70 dB)</span>, <span>ระวัง
+                    (70-85 dB)</span>, <span>อันตราย (>85 dB)</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let audioContext;
+        let mediaStreamSource;
+        let analyzer;
+        let chart;
+        let isRecording = false;
+
+        document.addEventListener('DOMContentLoaded', function () {
+            const startButton = document.getElementById('startButton');
+            const stopButton = document.getElementById('stopButton');
+            const micStatus = document.getElementById('micStatus');
+
+            // สร้างข้อมูลเริ่มต้น (ทั้งหมดเป็น 0)
+            const data = [];
+            const now = Date.now();
+            for (let i = 0; i < 600; i++) {
+                data.push({
+                    x: now - (599 - i) * 1000,
+                    y: 0
+                });
+            }
+
+            // สร้างกราฟ
+            const ctx = document.getElementById('decibelChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [{
+                        label: 'ระดับความดัง (dB)',
+                        data: data,
+                        borderColor: '#4F46E5',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        fill: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                unit: 'second'
+                            },
+                            title: {
+                                display: true,
+                                text: 'เวลา'
+                            }
+                        },
+                        y: {
+                            min: 0,
+                            max: 100,
+                            title: {
+                                display: true,
+                                text: 'เดซิเบล (dB)'
+                            }
+                        }
+                    },
+                    plugins: {
+                        zoom: {
+                            zoom: {
+                                wheel: {
+                                    enabled: true
+                                },
+                                mode: 'x'
+                            },
+                            pan: {
+                                enabled: true,
+                                mode: 'x'
+                            }
+                        }
+                    }
+                }
+            });
+
+             // เพิ่มปุ่มดาวน์โหลด
+             const downloadButton = document.getElementById('downloadButton');
+            downloadButton.addEventListener('click', () => {
+                const canvas = document.getElementById('decibelChart');
+                const dataURL = canvas.toDataURL('image/png'); // แปลง canvas เป็น data URL
+                const link = document.createElement('a');
+                link.href = dataURL;
+                link.download = 'decibel_chart.png'; // ตั้งชื่อไฟล์
+                link.click(); // คลิก link เพื่อดาวน์โหลด
+            });
+
+            // เริ่มการวัดเสียง
+            startButton.addEventListener('click', async () => {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    mediaStreamSource = audioContext.createMediaStreamSource(stream);
+                    analyzer = audioContext.createAnalyser();
+
+                    analyzer.fftSize = 1024;
+                    mediaStreamSource.connect(analyzer);
+
+                    isRecording = true;
+                    startButton.style.display = 'none';
+                    stopButton.style.display = 'inline-block';
+                    micStatus.textContent = 'กำลังวัดเสียง...';
+                    micStatus.className = 'mic-status success';
+
+                    updateAudioLevel();
+                } catch (error) {
+                    console.error('Error accessing microphone:', error);
+                    micStatus.textContent = 'ไม่สามารถเข้าถึงไมโครโฟนได้ กรุณาให้สิทธิ์การใช้งานไมโครโฟน';
+                    micStatus.className = 'mic-status error';
+                }
+            });
+
+            // หยุดการวัดเสียง
+            stopButton.addEventListener('click', () => {
+                if (mediaStreamSource) {
+                    mediaStreamSource.mediaStream.getTracks().forEach(track => track.stop());
+                    mediaStreamSource.disconnect();
+                    analyzer.disconnect();
+                    isRecording = false;
+                    startButton.style.display = 'inline-block';
+                    stopButton.style.display = 'none';
+                    micStatus.textContent = 'การวัดเสียงถูกหยุด';
+                    micStatus.className = 'mic-status';
+                }
+            });
+        });
+
+        // ฟังก์ชันรีเซ็ตการซูม
+        window.resetZoom = function () {
+            chart.resetZoom();
+        };
+
+        // แปลงค่า volume เป็น dB
+        function volumeToDb(volume) {
+            return Math.round(20 * Math.log10(volume) + 100);
+        }
+
+        // กำหนดค่าสีตามระดับความดัง
+        function getDecibelColor(db) {
+            if (db >= 85) return '#ef4444';
+            if (db >= 70) return '#eab308';
+            return '#22c55e';
+        }
+
+        // อัพเดทระดับเสียง
+        function updateAudioLevel() {
+            if (!isRecording) return;
+
+            const dataArray = new Uint8Array(analyzer.frequencyBinCount);
+            analyzer.getByteFrequencyData(dataArray);
+
+            // คำนวณค่าเฉลี่ยของความถี่ทั้งหมด
+            const average = dataArray.reduce((acc, value) => acc + value, 0) / dataArray.length;
+            const volume = average / 255.0; // normalize to 0-1
+            const db = volumeToDb(volume);
+
+            // อัพเดทค่าปัจจุบัน
+            const currentDbElement = document.getElementById('currentDb');
+            currentDbElement.innerHTML = `${db} <span class="unit">dB</span>`;
+            currentDbElement.style.color = getDecibelColor(db);
+
+            // อัพเดทข้อมูลกราฟ
+            const newData = chart.data.datasets[0].data;
+            newData.push({
+                x: Date.now(),
+                y: db
+            });
+            newData.shift();
+            chart.update('none');
+
+            // เรียกฟังก์ชันต่อไปเมื่อพร้อม
+            // requestAnimationFrame(updateAudioLevel);
+
+            // รับค่าความถี่จาก input
+            const frequencyInput = document.getElementById('frequency');
+            const frequency = parseFloat(frequencyInput.value) * 1000; // แปลงเป็นมิลลิวินาที
+
+            // เรียกฟังก์ชันซ้ำตามความถี่ที่กำหนด
+            setTimeout(updateAudioLevel, frequency);
+
+            // setTimeout(updateAudioLevel, 100);
+        }
+
+
+        // อัปเดทระดับเสียง
+        function updateAudioLevel() {
+            if (!isRecording) return;
+
+            const dataArray = new Uint8Array(analyzer.frequencyBinCount);
+            analyzer.getByteFrequencyData(dataArray);
+
+            // คำนวณค่าเฉลี่ยของความถี่ทั้งหมด
+            const average = dataArray.reduce((acc, value) => acc + value, 0) / dataArray.length;
+            const volume = average / 255.0; // normalize to 0-1
+            const db = volumeToDb(volume);
+
+            // อัพเดทค่าปัจจุบัน
+            const currentDbElement = document.getElementById('currentDb');
+            currentDbElement.innerHTML = `${db} <span class="unit">dB</span>`;
+            currentDbElement.style.color = getDecibelColor(db);
+
+            // อัพเดทข้อมูลกราฟ
+            const newData = chart.data.datasets[0].data;
+            const now = Date.now();
+
+            // ตรวจสอบว่าข้อมูลเต็มหน้าจอหรือไม่
+            if (newData.length >= 600) {
+                newData.shift(); // ลบข้อมูลเก่าออก
+            }
+
+            newData.push({
+                x: now,
+                y: db
+            });
+
+            chart.update('none');
+
+            // เรียกฟังก์ชันซ้ำทุกวินาที
+            setTimeout(updateAudioLevel, 1000);
+        }
+    </script>
+</body>
+
+</html>
